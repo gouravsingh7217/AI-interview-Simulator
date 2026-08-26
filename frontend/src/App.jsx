@@ -40,6 +40,8 @@ function App() {
   const recordedChunksRef = useRef([])
   const [finalReport, setFinalReport] = useState(null)
 
+  const API_URL = import.meta.env.VITE_API_URL
+
 
   // ---------------- START RECORDING ----------------
 
@@ -181,7 +183,7 @@ function App() {
     try {
 
       const response = await fetch(
-        "http://127.0.0.1:8000/interview/start",
+        `${API_URL}/interview/start`,
         {
 
           method: "POST",
@@ -270,7 +272,7 @@ function App() {
     try {
 
       const response = await fetch(
-        "http://127.0.0.1:8000/interview/answer",
+        `${API_URL}/interview/answer`,
         {
 
           method: "POST",
