@@ -1,4 +1,4 @@
-# 🤖 AI Interview Assistant
+# 🤖 AI Interview Simulator
 
 An AI-powered interview preparation platform designed to help students and job seekers improve their technical knowledge, communication skills, and interview confidence through personalized mock interviews.
 
