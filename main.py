@@ -77,14 +77,13 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[
+        "https://ai-interview-assistant-1-k2wq.onrender.com"
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"]
 )
-
-
-
 # =========================================================
 # HOME
 # =========================================================
