@@ -1,182 +1,542 @@
 import os
 import json
 
-from langchain_huggingface import ChatHuggingFace, HuggingFaceEndpoint
 from dotenv import load_dotenv
-from langchain_core.prompts import PromptTemplate
-from model import AnswerEvaluation
+
+from langchain_huggingface import (
+    HuggingFaceEndpoint,
+    ChatHuggingFace
+)
+
+from langchain_core.prompts import (
+    ChatPromptTemplate
+)
 
 
-# ---------------- LOAD ENVIRONMENT VARIABLES ----------------
+# =========================================================
+# ENVIRONMENT VARIABLES
+# =========================================================
 
 load_dotenv()
 
-hf_token = os.getenv("HUGGINGFACEHUB_API_TOKEN")
+HF_TOKEN = os.getenv("HUGGINGFACEHUB_API_TOKEN")
 
-if not hf_token:
-    raise ValueError("HUGGINGFACEHUB_API_TOKEN is missing")
+if not HF_TOKEN:
+    raise ValueError(
+        "HF_TOKEN not found. Add HF_TOKEN to your .env file."
+    )
 
 
-# ---------------- LLM SETUP ----------------
+# =========================================================
+# HUGGING FACE LLM
+# =========================================================
 
 llm = HuggingFaceEndpoint(
-    repo_id="Qwen/Qwen3-4B-Instruct-2507",
+    repo_id="deepseek-ai/DeepSeek-V4-Flash-0731",
     task="text-generation",
-    huggingfacehub_api_token=hf_token
+    huggingfacehub_api_token=HF_TOKEN,
+    temperature=0.1,
+    max_new_tokens=2000
 )
 
-model = ChatHuggingFace(llm=llm)
-
-
-# ---------------- INTERVIEW START PROMPT ----------------
-
-prompt = PromptTemplate(
-    template="""
-You are an AI interviewer conducting a technical interview.
-
-The user's interview request is:
-{message}
-
-Your task is to understand the user's request and start the interview.
-
-INTERVIEW RULES:
-
-1. Ask exactly ONE interview question at a time.
-2. Never ask multiple interview questions in the same response.
-3. Start the interview immediately.
-4. Do not explain the interview rules to the user.
-5. Do not ask the user which difficulty level they want.
-6. If the user specifies a difficulty level such as easy, medium, or hard, follow that level.
-7. If the user does NOT specify a difficulty level, automatically start with an EASY beginner-level question.
-8. Gradually increase the difficulty based on the user's answers.
-9. If the user specifies a company, ask questions relevant to that company's interview style.
-10. If the user asks for previous-year or company-style questions, ask questions similar in concept and difficulty to those types of questions.
-11. Do not give the answer to the question.
-12. Wait for the user's answer before evaluating it.
-13. After the user answers, the evaluation process will analyze the answer and generate the next question.
-14. Keep the interview focused on the topics requested by the user.
-15. If multiple topics are requested, cover them one by one.
-16. Do not move to another topic too quickly.
-17. Questions should be technically accurate and suitable for a real technical interview.
-
-DIFFICULTY PROGRESSION:
-
-If no difficulty is specified:
-
-- Start with an easy/basic question.
-- After a good answer, ask a slightly more difficult question.
-- After a weak answer, ask another question at a similar or slightly easier level.
-- Gradually move from basic concepts to intermediate and advanced concepts.
-
-IMPORTANT:
-
-The FIRST question must be easy if the user has not specified a difficulty level.
-
-For example, if the user says:
-"Take my interview on OS"
-
-Do NOT ask:
-"What difficulty level do you want?"
-
-Instead, ask something like:
-"What is an operating system?"
-
-If the user says:
-"Take my interview on DBMS"
-
-Start with a basic DBMS question such as:
-"What is a DBMS and why is it used?"
-
-If the user says:
-"Take my interview on OS and DBMS"
-
-Start with one easy question from OS or DBMS and ask only that question.
-
-If the user says:
-"Take my medium-level interview on OS"
-
-Start directly with a medium-level OS question.
-
-If the user says:
-"Take my Cognizant interview on OS and DBMS"
-
-Ask questions relevant to a Cognizant-style technical interview, starting at an appropriate basic level unless the user specifies otherwise.
-
-OUTPUT RULE:
-
-Return ONLY the interview question.
-
-Do not return:
-- explanations
-- answers
-- multiple questions
-- difficulty questions
-- interview instructions
-- evaluation
-- feedback
-
-Start the interview now by asking exactly ONE question.
-""",
-    input_variables=["message"]
+model = ChatHuggingFace(
+    llm=llm
 )
 
 
-# ---------------- INTERVIEW HISTORY ----------------
+# =========================================================
+# PROMPT
+# =========================================================
 
-interview_history = {}
+prompt = ChatPromptTemplate.from_messages([
+    (
+        "human",
+        "{message}"
+    )
+])
+
+
+# =========================================================
+# CHAINS
+# =========================================================
 
 chain = prompt | model
 
+evaluation_chain = prompt | model
 
-# ---------------- START INTERVIEW ----------------
 
-def ask_llm(sessionid: str, message: str):
+# =========================================================
+# INTERVIEW HISTORY
+# =========================================================
+
+interview_history = {}
+
+
+# =========================================================
+# END INTERVIEW DETECTION
+# =========================================================
+
+def is_end_request(answer: str):
+
+    end_commands = [
+        "end interview",
+        "end my interview",
+        "stop interview",
+        "finish interview",
+        "quit interview",
+        "exit interview"
+    ]
+
+    cleaned_answer = answer.lower().strip()
+
+    return cleaned_answer in end_commands
+
+
+# =========================================================
+# START INTERVIEW
+# =========================================================
+
+def ask_llm(
+    sessionid: str,
+    message: str,
+    interview_type: str,
+    difficulty: str,
+    follow_up_mode: str
+):
+
+    # -----------------------------------------------------
+    # PREPARE CONTEXT BASED ON INTERVIEW TYPE
+    # -----------------------------------------------------
+
+    if interview_type == "topic":
+
+        context = f"""
+Interview type: Topic Based Interview
+
+Topic:
+{message}
+"""
+
+    elif interview_type == "resume":
+
+        context = f"""
+Interview type: Resume Based Interview
+
+Candidate Resume:
+{message}
+"""
+
+    elif interview_type == "company":
+
+        context = f"""
+Interview type: Company Specific Interview
+
+Company:
+{message}
+"""
+
+    elif interview_type == "jd":
+
+        context = f"""
+Interview type: Job Description Based Interview
+
+Job Description:
+{message}
+"""
+
+    elif interview_type == "mixed":
+
+        context = """
+Interview type: Mixed Technical Interview
+
+Topics:
+- Data Structures and Algorithms
+- Operating Systems
+- DBMS
+- Computer Networks
+- Object-Oriented Programming
+"""
+
+    else:
+
+        context = f"""
+Interview Context:
+{message}
+"""
+
+
+    # -----------------------------------------------------
+    # ADAPTIVE STARTING DIFFICULTY
+    # -----------------------------------------------------
+
+    if difficulty == "adaptive":
+
+        current_difficulty = "medium"
+
+    else:
+
+        current_difficulty = difficulty
+
+
+    # -----------------------------------------------------
+    # FIRST QUESTION PROMPT
+    # -----------------------------------------------------
+
+    prompt_message = f"""
+You are an experienced technical interviewer interviewing a
+fresher software engineering candidate.
+
+{context}
+
+Current difficulty:
+{current_difficulty}
+
+Question style:
+{follow_up_mode}
+
+
+INTERVIEW RULES:
+
+1. Ask ONLY ONE question.
+
+2. Do not provide the answer.
+
+3. Do not provide hints unless necessary.
+
+4. Keep the question appropriate for a fresher candidate.
+
+
+DIFFICULTY RULES:
+
+Easy:
+- Definitions
+- Basic concepts
+- Simple examples
+
+Medium:
+- Conceptual understanding
+- Comparisons
+- Practical scenarios
+- Basic implementation reasoning
+
+Hard:
+- Implementation details
+- Debugging
+- Edge cases
+- Architecture
+- Trade-offs
+- Deep technical reasoning
+
+
+QUESTION STYLE RULES:
+
+normal:
+Ask a normal interview question and move naturally
+through the interview.
+
+follow_up:
+Questions should probe deeper into concepts discussed
+in the candidate's previous answer.
+
+cross:
+Challenge the candidate's statements using questions
+such as:
+- Why?
+- How?
+- What if?
+- What are the trade-offs?
+- What happens in this scenario?
+
+
+INTERVIEW TYPE RULES:
+
+Resume:
+Ask questions primarily from:
+- Candidate projects
+- Technologies
+- Architecture
+- Implementation
+- Technical decisions
+- Challenges
+- Resume claims
+
+Topic:
+Stay within the selected topic.
+
+Company:
+Ask fresher-level questions appropriate for the
+selected company.
+
+JD:
+Focus on technologies, responsibilities and skills
+mentioned in the job description.
+
+Mixed:
+Ask questions across:
+DSA, OS, DBMS, Computer Networks and OOP.
+
+
+IMPORTANT:
+
+Do not repeat questions.
+
+Start the interview now.
+
+Ask ONLY the FIRST interview question.
+"""
+
+
+    # -----------------------------------------------------
+    # CALL LLM
+    # -----------------------------------------------------
 
     response = chain.invoke({
-        "message": message
+        "message": prompt_message
     })
 
-    question = response.content
+    question = response.content.strip()
 
-    interview_history[sessionid] = [
-        {
-            "question": question,
-            "answer": None
-        }
-    ]
+
+    # -----------------------------------------------------
+    # SAVE SESSION
+    # -----------------------------------------------------
+
+    interview_history[sessionid] = {
+
+        "interview_type": interview_type,
+
+        "context": message,
+
+        "difficulty": current_difficulty,
+
+        "follow_up_mode": follow_up_mode,
+
+        "questions": [
+            {
+                "question": question,
+                "answer": None
+            }
+        ]
+    }
+
 
     return question
 
 
-# ---------------- EVALUATE ANSWER ----------------
+# =========================================================
+# EVALUATE ANSWER
+# =========================================================
 
-def llm_evaluation(sessionid: str, answer: str):
+def llm_evaluation(
+    sessionid: str,
+    answer: str
+):
 
-    print("Received session:", sessionid)
-    print("Available sessions:", interview_history)
+    # =====================================================
+    # GET SESSION
+    # =====================================================
 
-    if sessionid not in interview_history:
-        return "Invalid session ID"
+    session = interview_history.get(sessionid)
 
-    history = interview_history[sessionid]
-
-    last_question = history[-1]["question"]
-
-    history[-1]["answer"] = answer
+    if not session:
+        return {
+            "error": "Invalid session"
+        }
 
 
-    evaluation_template = f"""
-You are an AI interviewer.
+    interview_type = session["interview_type"]
+    context = session["context"]
+    difficulty = session["difficulty"]
+    follow_up_mode = session["follow_up_mode"]
+    questions = session["questions"]
 
-Previous question:
-{last_question}
 
-User's answer:
+    # =====================================================
+    # GET CURRENT QUESTION
+    # =====================================================
+
+    current_question = questions[-1]["question"]
+
+
+    # =====================================================
+    # BUILD PREVIOUS INTERVIEW HISTORY
+    # =====================================================
+
+    previous_questions = ""
+
+    for item in questions:
+
+        previous_questions += (
+            f"\nQuestion: {item['question']}\n"
+        )
+
+        if item["answer"] is not None:
+
+            previous_questions += (
+                f"Answer: {item['answer']}\n"
+            )
+
+
+    # =====================================================
+    # MAIN EVALUATION PROMPT
+    # =====================================================
+
+    evaluation_prompt = f"""
+You are an experienced technical interviewer.
+
+Evaluate the candidate's answer.
+
+Interview type:
+{interview_type}
+
+Interview context:
+{context}
+
+Current difficulty:
+{difficulty}
+
+Question style:
+{follow_up_mode}
+
+Previous interview:
+{previous_questions}
+
+Current question:
+{current_question}
+
+Candidate answer:
 {answer}
 
-Evaluate the user's answer specifically against the previous question.
+
+TASK:
+
+Evaluate the candidate's answer and generate the next
+interview question.
+
+
+GRADING:
+
+Give a grade between 0 and 10.
+
+Consider:
+
+- Technical correctness
+- Conceptual understanding
+- Completeness
+- Communication
+- Grammar
+
+
+DIFFICULTY ADAPTATION:
+
+If the answer is strong:
+
+easy -> medium
+medium -> hard
+hard -> hard
+
+
+If the answer is partially correct:
+
+Keep approximately the same difficulty.
+
+
+If the answer is weak:
+
+hard -> medium
+medium -> easy
+easy -> easy
+
+
+QUESTION STYLE:
+
+If style is "follow_up":
+
+Generate a question directly related to something
+the candidate said in the answer.
+
+
+If style is "cross":
+
+Challenge the candidate's answer.
+
+Ask things like:
+
+Why?
+How?
+What if?
+What are the trade-offs?
+What happens in another scenario?
+
+
+If style is "normal":
+
+Ask the next relevant interview question normally.
+
+
+INTERVIEW TYPE RULES:
+
+resume:
+Continue asking from the candidate's resume,
+projects and technologies.
+
+topic:
+Stay within the selected topic.
+
+jd:
+Stay focused on the job description.
+
+company:
+Ask questions appropriate for that company.
+
+mixed:
+Move naturally between DSA, OS, DBMS,
+Computer Networks and OOP.
+
+
+IMPORTANT:
+
+Do NOT repeat previous questions.
+
+Generate exactly ONE next question.
+
+next_difficulty MUST be exactly:
+
+easy
+
+OR
+
+medium
+
+OR
+
+hard
+
+
+Keep the response concise.
+
+feedback: maximum 2 sentences.
+
+technical_knowledge: maximum 2 sentences.
+
+communication: maximum 1 sentence.
+
+grammar: maximum 1 sentence.
+
+better_answer: maximum 120 words.
+
+next_question: maximum 2 sentences.
+
+Do not give lengthy explanations.
+
+Make sure the complete JSON is finished before ending your response.
+
 
 Return ONLY valid JSON.
+
+Do NOT use markdown.
+
+Do NOT use ```json.
 
 Use exactly this structure:
 
@@ -187,118 +547,566 @@ Use exactly this structure:
     "communication": "",
     "grammar": "",
     "better_answer": "",
-    "next_question": ""
+    "next_question": "",
+    "next_difficulty": "medium"
 }}
-
-Rules:
-
-1. grade must be a number from 0 to 10.
-2. Evaluate the answer specifically against the previous question.
-3. Give useful technical feedback.
-4. Give communication feedback.
-5. Give grammar feedback.
-6. Provide a better version of the answer.
-7. next_question must contain exactly ONE interview question.
-8. The next question must remain related to the same topic.
-9. Do not provide the answer to the next question.
-10. Return only JSON.
-11. Do not use markdown.
-12. Do not wrap the JSON in ```json.
 """
 
 
-    response = model.invoke(
-        evaluation_template
+    # =====================================================
+    # CALL EVALUATION MODEL
+    # =====================================================
+
+    response = evaluation_chain.invoke({
+        "message": evaluation_prompt
+    })
+
+    response_text = response.content.strip()
+
+    print(
+        "RAW EVALUATION RESPONSE:",
+        repr(response_text)
     )
 
 
-    data = json.loads(
-        response.content
+    # =====================================================
+    # RETRY IF MODEL RETURNS EMPTY RESPONSE
+    # =====================================================
+
+    if not response_text:
+
+        print(
+            "Empty response received. Retrying evaluation..."
+        )
+
+        retry_prompt = f"""
+Evaluate this technical interview answer.
+
+Question:
+{current_question}
+
+Candidate answer:
+{answer}
+
+Current difficulty:
+{difficulty}
+
+
+Return ONLY JSON in this exact format:
+
+{{
+    "grade": 0,
+    "feedback": "",
+    "technical_knowledge": "",
+    "communication": "",
+    "grammar": "",
+    "better_answer": "",
+    "next_question": "",
+    "next_difficulty": "medium"
+}}
+
+
+Rules:
+
+grade must be between 0 and 10.
+
+next_difficulty must be exactly:
+easy
+medium
+or
+hard.
+
+Give concise feedback.
+
+Provide a better answer.
+
+Generate exactly one next interview question.
+
+Do not use markdown.
+
+Return JSON only.
+"""
+
+        response = evaluation_chain.invoke({
+            "message": retry_prompt
+        })
+
+        response_text = response.content.strip()
+
+        print(
+            "RETRY RESPONSE:",
+            repr(response_text)
+        )
+
+
+    # =====================================================
+    # IF RESPONSE IS STILL EMPTY
+    # =====================================================
+
+    if not response_text:
+
+        raise ValueError(
+            "LLM returned an empty response "
+            "while evaluating the answer."
+        )
+
+
+    # =====================================================
+    # CLEAN MODEL RESPONSE
+    # =====================================================
+
+    response_text = response_text.strip()
+
+
+    # Remove ```json
+    if response_text.startswith("```json"):
+
+        response_text = response_text[7:]
+
+
+    # Remove ```
+    elif response_text.startswith("```"):
+
+        response_text = response_text[3:]
+
+
+    # Remove ending ```
+    if response_text.endswith("```"):
+
+        response_text = response_text[:-3]
+
+
+    response_text = response_text.strip()
+
+
+    # =====================================================
+    # EXTRA JSON CLEANING
+    # =====================================================
+
+    # Sometimes model writes text before JSON.
+    # Extract only content between first { and last }.
+
+    first_brace = response_text.find("{")
+    last_brace = response_text.rfind("}")
+
+
+    if first_brace != -1 and last_brace != -1:
+
+        response_text = response_text[
+            first_brace:last_brace + 1
+        ]
+
+
+    print(
+        "CLEANED EVALUATION JSON:",
+        repr(response_text)
     )
 
 
-    evaluation = AnswerEvaluation(
-        **data
+    # =====================================================
+    # PARSE JSON
+    # =====================================================
+
+    try:
+
+        evaluation = json.loads(
+            response_text
+        )
+
+    except json.JSONDecodeError as error:
+
+        print(
+            "EVALUATION JSON ERROR:",
+            error
+        )
+
+        print(
+            "RAW JSON TEXT:",
+            repr(response_text)
+        )
+
+        raise
+
+
+    # =====================================================
+    # VALIDATE / PROVIDE DEFAULT VALUES
+    # =====================================================
+
+    evaluation.setdefault(
+        "grade",
+        0
+    )
+
+    evaluation.setdefault(
+        "feedback",
+        "No feedback generated."
+    )
+
+    evaluation.setdefault(
+        "technical_knowledge",
+        "Not evaluated."
+    )
+
+    evaluation.setdefault(
+        "communication",
+        "Not evaluated."
+    )
+
+    evaluation.setdefault(
+        "grammar",
+        "Not evaluated."
+    )
+
+    evaluation.setdefault(
+        "better_answer",
+        ""
+    )
+
+    evaluation.setdefault(
+        "next_question",
+        ""
+    )
+
+    evaluation.setdefault(
+        "next_difficulty",
+        difficulty
     )
 
 
-    next_question = (
-        evaluation.next_question
+    # =====================================================
+    # VALIDATE GRADE
+    # =====================================================
+
+    try:
+
+        evaluation["grade"] = float(
+            evaluation["grade"]
+        )
+
+    except (ValueError, TypeError):
+
+        evaluation["grade"] = 0
+
+
+    # Keep grade between 0 and 10
+
+    evaluation["grade"] = max(
+        0,
+        min(
+            10,
+            evaluation["grade"]
+        )
     )
 
 
-    history.append(
-        {
+    # =====================================================
+    # SAVE CURRENT ANSWER
+    # =====================================================
+
+    questions[-1]["answer"] = answer
+
+
+    # =====================================================
+    # UPDATE DIFFICULTY
+    # =====================================================
+
+    allowed_difficulties = [
+        "easy",
+        "medium",
+        "hard"
+    ]
+
+
+    next_difficulty = evaluation.get(
+        "next_difficulty"
+    )
+
+
+    if next_difficulty not in allowed_difficulties:
+
+        next_difficulty = difficulty
+
+        evaluation[
+            "next_difficulty"
+        ] = difficulty
+
+
+    session[
+        "difficulty"
+    ] = next_difficulty
+
+
+    # =====================================================
+    # SAVE NEXT QUESTION
+    # =====================================================
+
+    next_question = evaluation.get(
+        "next_question",
+        ""
+    )
+
+
+    if next_question:
+
+        questions.append({
             "question": next_question,
             "answer": None
-        }
+        })
+
+
+    # =====================================================
+    # CONVERT EVALUATION BACK TO JSON
+    # =====================================================
+
+    # Your frontend currently expects:
+    #
+    # data.response.content
+    #
+    # Therefore we keep response.content.
+
+    response.content = json.dumps(
+        evaluation
+    )
+
+
+    # =====================================================
+    # DEBUG
+    # =====================================================
+
+    print(
+        "GRADE:",
+        evaluation["grade"]
+    )
+
+    print(
+        "NEXT DIFFICULTY:",
+        evaluation["next_difficulty"]
+    )
+
+    print(
+        "NEXT QUESTION:",
+        evaluation["next_question"]
+    )
+
+
+    # =====================================================
+    # RETURN RESPONSE
+    # =====================================================
+
+    return response
+
+
+    # -----------------------------------------------------
+    # CALL EVALUATION LLM
+    # -----------------------------------------------------
+
+    response = evaluation_chain.invoke({
+        "message": evaluation_prompt
+    })
+
+
+    # -----------------------------------------------------
+    # CLEAN JSON RESPONSE
+    # -----------------------------------------------------
+
+    response_text = response.content.strip()
+
+    if response_text.startswith("```json"):
+
+        response_text = response_text[7:]
+
+    elif response_text.startswith("```"):
+
+        response_text = response_text[3:]
+
+
+    if response_text.endswith("```"):
+
+        response_text = response_text[:-3]
+
+
+    response_text = response_text.strip()
+
+
+    try:
+
+        evaluation = json.loads(
+            response_text
+        )
+
+    except json.JSONDecodeError as error:
+
+        print(
+            "EVALUATION JSON ERROR:",
+            error
+        )
+
+        print(
+            "RAW LLM RESPONSE:",
+            response.content
+        )
+
+        raise
+
+
+    # -----------------------------------------------------
+    # SAVE ANSWER
+    # -----------------------------------------------------
+
+    questions[-1]["answer"] = answer
+
+
+    # -----------------------------------------------------
+    # UPDATE DIFFICULTY
+    # -----------------------------------------------------
+
+    allowed_difficulties = [
+        "easy",
+        "medium",
+        "hard"
+    ]
+
+
+    next_difficulty = evaluation.get(
+        "next_difficulty"
+    )
+
+
+    if next_difficulty in allowed_difficulties:
+
+        session["difficulty"] = next_difficulty
+
+
+    # -----------------------------------------------------
+    # SAVE NEXT QUESTION
+    # -----------------------------------------------------
+
+    next_question = evaluation.get(
+        "next_question",
+        ""
+    )
+
+
+    if next_question:
+
+        questions.append({
+            "question": next_question,
+            "answer": None
+        })
+
+
+    # -----------------------------------------------------
+    # IMPORTANT:
+    # FRONTEND CURRENTLY EXPECTS data.response.content
+    # -----------------------------------------------------
+
+    response.content = json.dumps(
+        evaluation
     )
 
 
     return response
 
 
-# ---------------- END REQUEST DETECTION ----------------
+# =========================================================
+# FINAL INTERVIEW REPORT
+# =========================================================
 
-def is_end_request(message: str):
-
-    end_words = [
-        "end interview",
-        "end this interview",
-        "end my interview",
-        "stop interview",
-        "stop this interview",
-        "finish interview",
-        "finish this interview",
-        "let's end",
-        "lets end",
-        "quit interview"
-    ]
-
-    message = message.lower()
-
-    return any(
-        word in message
-        for word in end_words
-    )
-
-
-# ---------------- FINAL REPORT ----------------
-
-def generate_final_report(sessionid: str):
+def generate_final_report(
+    sessionid: str
+):
 
     if sessionid not in interview_history:
-        return "Invalid session ID"
+
+        return {
+            "error": "Invalid session ID"
+        }
 
 
-    history = interview_history[
+    session = interview_history[
         sessionid
+    ]
+
+
+    history = session[
+        "questions"
     ]
 
 
     conversation = ""
 
 
+    # -----------------------------------------------------
+    # BUILD COMPLETE INTERVIEW
+    # -----------------------------------------------------
+
     for item in history:
 
         if item["answer"] is not None:
 
             conversation += f"""
-Question: {item["question"]}
-Answer: {item["answer"]}
+
+Question:
+{item["question"]}
+
+Answer:
+{item["answer"]}
+
 """
 
 
-    report_prompt = f"""
-You are an AI interview evaluator.
+    if not conversation.strip():
 
-Below is the complete interview history:
+        return {
+            "error":
+            "No completed interview answers found"
+        }
+
+
+    # -----------------------------------------------------
+    # FINAL REPORT PROMPT
+    # -----------------------------------------------------
+
+    report_prompt = f"""
+You are an AI technical interview evaluator.
+
+Analyze the candidate's complete interview
+performance.
+
+
+Interview type:
+
+{session["interview_type"]}
+
+
+Original interview context:
+
+{session["context"]}
+
+
+Final difficulty reached:
+
+{session["difficulty"]}
+
+
+Question style:
+
+{session["follow_up_mode"]}
+
+
+COMPLETE INTERVIEW:
 
 {conversation}
 
-Analyze the candidate's overall interview performance.
 
-Return ONLY valid JSON in this exact structure:
+Generate the final interview report.
+
+
+Return ONLY valid JSON.
+
+Do NOT use markdown.
+
+Use exactly this structure:
 
 {{
     "overall_score": 0,
@@ -311,47 +1119,93 @@ Return ONLY valid JSON in this exact structure:
     "final_feedback": ""
 }}
 
-Rules:
 
-1. All scores must be from 0 to 10.
-2. Evaluate only from the interview history provided.
-3. strengths should contain the candidate's strongest areas.
-4. weaknesses should contain the areas where the candidate struggled.
-5. topics_to_improve should contain technical topics that should be revised.
-6. final_feedback should give concise overall advice.
-7. Return only valid JSON.
-8. Do not use markdown.
+RULES:
+
+1. All scores must be between 0 and 10.
+
+2. Evaluate only based on the interview history.
+
+3. Consider the difficulty of the questions.
+
+4. Consider how the candidate handled
+follow-up or cross questions.
+
+5. strengths should contain the candidate's
+strongest areas.
+
+6. weaknesses should contain areas where the
+candidate struggled.
+
+7. topics_to_improve should contain technical
+topics the candidate should revise.
+
+8. final_feedback should be concise and actionable.
+
+9. Return valid JSON only.
 """
 
+
+    # -----------------------------------------------------
+    # CALL MODEL
+    # -----------------------------------------------------
 
     response = model.invoke(
         report_prompt
     )
 
 
+    response_text = response.content.strip()
+
+
+    # -----------------------------------------------------
+    # REMOVE POSSIBLE MARKDOWN
+    # -----------------------------------------------------
+
+    if response_text.startswith("```json"):
+
+        response_text = response_text[7:]
+
+    elif response_text.startswith("```"):
+
+        response_text = response_text[3:]
+
+
+    if response_text.endswith("```"):
+
+        response_text = response_text[:-3]
+
+
+    response_text = response_text.strip()
+
+
+    # -----------------------------------------------------
+    # PARSE JSON
+    # -----------------------------------------------------
+
+    try:
+
+        data = json.loads(
+            response_text
+        )
+
+    except json.JSONDecodeError as error:
+
+        print(
+            "FINAL REPORT JSON ERROR:",
+            error
+        )
+
+        print(
+            "RAW FINAL REPORT:",
+            response.content
+        )
+
+        raise
+
+
     print(
         "FINAL REPORT FUNCTION CALLED"
-    )
-
-    print(
-        "Conversation:",
-        conversation
-    )
-
-    print(
-        "LLM response:",
-        response.content
-    )
-
-
-    data = json.loads(
-        response.content
-    )
-
-
-    print(
-        "Parsed data:",
-        data
     )
 
 
